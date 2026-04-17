@@ -1,0 +1,25 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+
+# Build files
+build/
+*.tsbuildinfo
+
+# IDE
+.idea/
+
+# OS
+Thumbs.db
+
+# Prisma
+prisma/.env
+
+# Downloads (keep folder, ignore exe files)
+public/downloads/*.exe
+public/downloads/*.dmg
+public/downloads/*.zip
+temp_auto_push.bat
+temp_interactive_push.bat
+.env
