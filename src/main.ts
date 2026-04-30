@@ -1,3 +1,6 @@
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
@@ -16,9 +19,9 @@ async function bootstrap() {
     logger: ['error', 'warn', 'log', 'debug', 'verbose'],
   });
 
-  // 50MB limit for screenshot uploads (MUST be before CORS)
-  app.use(bodyParser.json({ limit: '50mb' }));
-  app.use(bodyParser.urlencoded({ limit: '50mb', extended: true }));
+  // 10MB limit for screenshot uploads (MUST be before CORS)
+  app.use(bodyParser.json({ limit: '10mb' }));
+  app.use(bodyParser.urlencoded({ limit: '10mb', extended: true }));
 
   app.enableCors({
     origin: '*',
@@ -56,6 +59,39 @@ async function bootstrap() {
   console.log(`🚀 Backend API running on http://localhost:${port}/api`);
   console.log(`📦 Downloads available at http://localhost:${port}/downloads/`);
   console.log(`📸 Screenshots available at http://localhost:${port}/screenshots/`);
+  
+  // Memory monitoring (every 60 seconds)
+  setInterval(() => {
+    const used = process.memoryUsage();
+    const memoryStats = {
+      rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+      heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
+    };
+    
+    // Log only if memory usage is high
+    if (used.heapUsed > 500 * 1024 * 1024) { // > 500MB
+      console.log('📊 Memory Usage:', memoryStats);
+    }
+    
+    // Critical memory alert
+    if (used.heapUsed > 900 * 1024 * 1024) { // > 900MB
+      console.error('⚠️ CRITICAL MEMORY USAGE - Consider restarting');
+    }
+  }, 60000);
+  
+  // Graceful shutdown handlers
+  process.on('SIGTERM', async () => {
+    console.log('\n🛑 SIGTERM received, shutting down gracefully...');
+    await app.close();
+    process.exit(0);
+  });
+  
+  process.on('SIGINT', async () => {
+    console.log('\n🛑 SIGINT received, shutting down gracefully...');
+    await app.close();
+    process.exit(0);
+  });
 }
 
 bootstrap();
