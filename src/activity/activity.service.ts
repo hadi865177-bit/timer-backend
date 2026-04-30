@@ -16,6 +16,9 @@ interface ActivityBatchItem {
 
 @Injectable()
 export class ActivityService {
+  private pendingRollups = 0;
+  private readonly MAX_PENDING_ROLLUPS = 10;
+
   constructor(
     private prisma: PrismaService,
     @Optional() @InjectQueue('activity-rollup') private rollupQueue: Queue,
@@ -74,7 +77,10 @@ export class ActivityService {
 
     // Close unclosed sessions and queue rollup in background
     if (existingSessions.length > 0) {
-      setImmediate(async () => {
+      // Check if we can queue in background or need to process synchronously
+      if (this.pendingRollups >= this.MAX_PENDING_ROLLUPS) {
+        console.log(`⚠️ Too many pending rollups (${this.pendingRollups}), processing synchronously`);
+        // Process synchronously to prevent memory spike
         for (const oldSession of existingSessions) {
           console.log(`⚠️ Found unclosed session ${oldSession.id}, closing and processing...`);
           
@@ -98,7 +104,41 @@ export class ActivityService {
             await this.rollupService.rollupUserActivity(oldSession.userId, from, to);
           }
         }
-      });
+      } else {
+        // Queue in background with backpressure control
+        this.pendingRollups++;
+        setImmediate(async () => {
+          try {
+            for (const oldSession of existingSessions) {
+              console.log(`⚠️ Found unclosed session ${oldSession.id}, closing and processing...`);
+              
+              await this.prisma.deviceSession.update({
+                where: { id: oldSession.id },
+                data: { endedAt: new Date() },
+              });
+
+              const from = oldSession.startedAt;
+              const to = new Date();
+              
+              if (this.rollupQueue) {
+                try {
+                  await this.rollupQueue.add('rollup-user', { userId: oldSession.userId, from, to });
+                  console.log(`🔄 Queued rollup for unclosed session ${oldSession.id}`);
+                } catch (error) {
+                  console.log(`⚠️ Redis unavailable, running rollup directly for unclosed session`);
+                  await this.rollupService.rollupUserActivity(oldSession.userId, from, to);
+                }
+              } else {
+                await this.rollupService.rollupUserActivity(oldSession.userId, from, to);
+              }
+            }
+          } catch (error) {
+            console.error('Background rollup error:', error);
+          } finally {
+            this.pendingRollups--;
+          }
+        });
+      }
     }
 
     const session = await this.prisma.deviceSession.create({

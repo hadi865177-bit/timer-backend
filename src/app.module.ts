@@ -11,6 +11,9 @@ import { UsersModule } from './users/users.module';
 import { WorkerModule } from './worker/worker.module';
 import { AppController } from './app.controller';
 
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 const isRedisEnabled = process.env.REDIS_ENABLED !== 'false';
 
 @Module({
