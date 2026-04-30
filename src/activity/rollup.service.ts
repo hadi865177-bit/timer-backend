@@ -11,17 +11,26 @@ interface MinuteBucket {
 
 @Injectable()
 export class RollupService {
-  private rollupLocks = new Map<string, boolean>();
+  private rollupLocks = new Map<string, { locked: boolean; timestamp: number }>();
   
   constructor(private prisma: PrismaService) {}
 
   async rollupUserActivity(userId: string, from: Date, to: Date, projectId?: string) {
+    // Clean stale locks (older than 5 minutes)
+    const now = Date.now();
+    for (const [key, value] of this.rollupLocks.entries()) {
+      if (now - value.timestamp > 300000) {
+        this.rollupLocks.delete(key);
+        console.log(`🧹 Cleaned stale lock for user ${key}`);
+      }
+    }
+    
     // Prevent concurrent rollups for the same user
-    if (this.rollupLocks.get(userId)) {
+    if (this.rollupLocks.get(userId)?.locked) {
       console.log(`⏭️ Rollup already in progress for user ${userId}, skipping duplicate`);
       return;
     }
-    this.rollupLocks.set(userId, true);
+    this.rollupLocks.set(userId, { locked: true, timestamp: now });
     
     try {
       const user = await this.prisma.user.findUnique({

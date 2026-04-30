@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import * as sharp from 'sharp';
+import sharp from 'sharp';
 
 @Injectable()
 export class StorageService {
@@ -33,17 +33,25 @@ export class StorageService {
     base64Data: string,
     timestamp: Date,
   ): Promise<{ filePath: string; fileSize: number }> {
-    const matches = base64Data.match(/^data:image\/jpeg;base64,(.+)$/);
-    if (!matches) {
-      throw new Error('Invalid base64 image data');
-    }
+    try {
+      const matches = base64Data.match(/^data:image\/jpeg;base64,(.+)$/);
+      if (!matches) {
+        throw new Error('Invalid base64 image data');
+      }
 
-    const buffer = Buffer.from(matches[1], 'base64');
-    
-    const compressedBuffer = await sharp(buffer)
-      .jpeg({ quality: 70, progressive: true })
-      .resize(1920, 1080, { fit: 'inside', withoutEnlargement: true })
-      .toBuffer();
+      const buffer = Buffer.from(matches[1], 'base64');
+      
+      // Validate image size (10MB max)
+      const maxSize = 10 * 1024 * 1024; // 10MB
+      if (buffer.length > maxSize) {
+        throw new Error(`Image too large: ${Math.round(buffer.length / 1024 / 1024)}MB (max 10MB)`);
+      }
+      
+      const compressedBuffer = await sharp(buffer)
+        .jpeg({ quality: 70, progressive: true })
+        .resize(1920, 1080, { fit: 'inside', withoutEnlargement: true })
+        .timeout({ seconds: 10 }) // Add timeout to prevent hanging
+        .toBuffer();
     
     console.log(`🗜️ Compressed: ${buffer.length} → ${compressedBuffer.length} bytes (${Math.round((1 - compressedBuffer.length / buffer.length) * 100)}% reduction)`);
 
@@ -87,7 +95,11 @@ export class StorageService {
         fileSize: compressedBuffer.length,
       };
     }
+  } catch (error: any) {
+    console.error('Screenshot processing failed:', error);
+    throw new Error(`Failed to process screenshot: ${error?.message || 'Unknown error'}`);
   }
+}
 
   async deleteScreenshot(filePath: string): Promise<void> {
     if (this.useS3 && filePath.includes('s3.amazonaws.com')) {

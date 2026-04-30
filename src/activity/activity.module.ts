@@ -4,6 +4,9 @@ import { ActivityService } from './activity.service';
 import { ActivityController } from './activity.controller';
 import { RollupService } from './rollup.service';
 
+import * as dotenv from 'dotenv';
+dotenv.config();
+
 const isRedisEnabled = process.env.REDIS_ENABLED !== 'false';
 
 @Module({
