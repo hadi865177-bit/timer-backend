@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import sharp from 'sharp';
+
 
 @Injectable()
 export class StorageService {
@@ -33,6 +33,7 @@ export class StorageService {
     base64Data: string,
     timestamp: Date,
   ): Promise<{ filePath: string; fileSize: number }> {
+    const sharp = require('sharp');
     try {
       const matches = base64Data.match(/^data:image\/jpeg;base64,(.+)$/);
       if (!matches) {
