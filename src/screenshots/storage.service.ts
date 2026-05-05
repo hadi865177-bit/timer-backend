@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
-import sharp from 'sharp';
+const sharp = require('sharp');
 
 @Injectable()
 export class StorageService {
