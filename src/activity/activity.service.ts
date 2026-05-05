@@ -1,6 +1,6 @@
 import { Injectable, BadRequestException, Optional } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
-import { Queue } from 'bullmq';
+import type { Queue } from 'bullmq';
 import { PrismaService } from '../prisma/prisma.service';
 import { RollupService } from './rollup.service';
 import { isWithinCheckinWindow, isWithinBreakWindow } from '../shared/utils';
@@ -58,8 +58,8 @@ export class ActivityService {
         end: trackerProfile?.custom_schedule_end ? formatTime(trackerProfile.custom_schedule_end) : formatTime(policy.shift_end) || '18:00',
       },
       breakWindow: {
-        start: formatTime(policy.break_start) || '12:00',
-        end: formatTime(policy.break_end) || '13:00',
+        start: trackerProfile?.custom_break_start ? formatTime(trackerProfile.custom_break_start) : formatTime(policy.break_start) || '12:00',
+        end: trackerProfile?.custom_break_end ? formatTime(trackerProfile.custom_break_end) : formatTime(policy.break_end) || '13:00',
       },
       idleThresholdSeconds: policy.idle_threshold_seconds,
     };
@@ -229,8 +229,8 @@ export class ActivityService {
         end: trackerProfile?.custom_schedule_end ? formatTime(trackerProfile.custom_schedule_end) : formatTime(policy.shift_end) || '18:00',
       },
       breakWindow: {
-        start: formatTime(policy.break_start) || '12:00',
-        end: formatTime(policy.break_end) || '13:00',
+        start: trackerProfile?.custom_break_start ? formatTime(trackerProfile.custom_break_start) : formatTime(policy.break_start) || '12:00',
+        end: trackerProfile?.custom_break_end ? formatTime(trackerProfile.custom_break_end) : formatTime(policy.break_end) || '13:00',
       },
       idleThresholdSeconds: policy.idle_threshold_seconds,
     };
