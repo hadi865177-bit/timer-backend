@@ -18,6 +18,6 @@ export class OrganizationsController {
     if (!req.user.orgId) {
       throw new Error('User orgId is missing');
     }
-    return this.organizationsService.getSchedule(req.user.orgId, req.user.sub);
+    return this.organizationsService.getSchedule(req.user.orgId);
   }
 }
