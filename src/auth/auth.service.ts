@@ -101,6 +101,8 @@ export class AuthService {
       screenshotEnabled: screenshotEnabled,
       customCheckinStart: user.tracker_profiles?.custom_schedule_start?.toString(),
       customCheckinEnd: user.tracker_profiles?.custom_schedule_end?.toString(),
+      customBreakStart: user.tracker_profiles?.custom_break_start?.toString(),
+      customBreakEnd: user.tracker_profiles?.custom_break_end?.toString(),
       projects: user.createdProjects,
     };
   }
