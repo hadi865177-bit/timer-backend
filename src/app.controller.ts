@@ -34,7 +34,7 @@ export class AppController {
 
   @Get('downloads/desktop-app')
   downloadDesktopApp(@Res() res: Response) {
-    const filePath = '/home/ec2-user/backend/public/downloads/HRMS-Desktop-App-Setup.exe';
+    const filePath = path.join(process.cwd(), 'public', 'downloads', 'HRMS-Desktop-App-Setup.exe');
     res.download(filePath, 'HRMS-Desktop-App-Setup.exe');
   }
 }
