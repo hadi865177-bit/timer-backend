@@ -9,6 +9,7 @@ import { ScreenshotsModule } from './screenshots/screenshots.module';
 import { ProjectsModule } from './projects/projects.module';
 import { UsersModule } from './users/users.module';
 import { WorkerModule } from './worker/worker.module';
+import { BreakModule } from './break/break.module';
 import { AppController } from './app.controller';
 
 import * as dotenv from 'dotenv';
@@ -38,6 +39,7 @@ const isRedisEnabled = process.env.REDIS_ENABLED !== 'false';
     ScreenshotsModule,
     ProjectsModule,
     UsersModule,
+    BreakModule,
     // Only register WorkerModule if Redis is enabled
     ...(isRedisEnabled ? [WorkerModule] : []),
   ],

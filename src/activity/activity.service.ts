@@ -235,7 +235,10 @@ export class ActivityService {
       idleThresholdSeconds: policy.idle_threshold_seconds,
     };
 
-    console.log(`⏰ Schedule: Check-in ${rules.checkinWindow.start}-${rules.checkinWindow.end}, Break ${rules.breakWindow.start}-${rules.breakWindow.end}, TZ: ${rules.timezone}`);
+    console.log(`⏰ [DEBUG] Rules for user ${userId}:`);
+    console.log(`   - Timezone: ${rules.timezone}`);
+    console.log(`   - Check-in: ${rules.checkinWindow.start} to ${rules.checkinWindow.end} (${trackerProfile?.custom_schedule_start ? 'CUSTOM' : 'ORG'})`);
+    console.log(`   - Break: ${rules.breakWindow.start} to ${rules.breakWindow.end} (${trackerProfile?.custom_break_start ? 'CUSTOM' : 'ORG'})`);
     
     const validSamples = [];
     
@@ -253,18 +256,16 @@ export class ActivityService {
       const isInCheckin = isWithinCheckinWindow(timestamp, rules);
       const isInBreak = isWithinBreakWindow(timestamp, rules);
       
-      if (index === 0) {
-        console.log(`🔍 Sample check: Time=${timestamp.toISOString()}, LocalTime=${localTimeStr}, InCheckin=${isInCheckin}, InBreak=${isInBreak}`);
-        console.log(`🔍 Rules: checkin=${rules.checkinWindow.start}-${rules.checkinWindow.end}`);
+      if (index === 0 || index === samples.length - 1) {
+        console.log(`🔍 [SAMPLE ${index}] Time: ${localTimeStr} | InCheckin: ${isInCheckin} | InBreak: ${isInBreak}`);
       }
 
       if (!isInCheckin) {
-        if (index === 0) console.log(`❌ Rejected: Outside check-in window`);
         continue;
       }
 
       if (isInBreak) {
-        if (index === 0) console.log(`❌ Rejected: Break time`);
+        console.log(`🚫 [REJECTED] Sample at ${localTimeStr} rejected because it is in BREAK window (${rules.breakWindow.start}-${rules.breakWindow.end})`);
         continue;
       }
 
@@ -584,6 +585,35 @@ export class ActivityService {
             calculatedBreakSeconds = Math.floor((overlapEnd - overlapStart) / 1000);
             
             if (calculatedBreakSeconds < 0) calculatedBreakSeconds = 0;
+          }
+        }
+      }
+
+      // ✅ NEW: Calculate flexible break time from break_sessions table
+      const flexibleBreaks = await this.prisma.break_sessions.findMany({
+        where: {
+          user_id: userId,
+          break_in_time: { gte: today },
+          // Remove the "not: null" constraint to include currently active breaks
+        },
+      });
+
+      for (const flexBreak of flexibleBreaks) {
+        const breakStart = flexBreak.break_in_time.getTime();
+        // If break is still active, use 'now' as the end time
+        const breakEnd = flexBreak.break_out_time ? flexBreak.break_out_time.getTime() : now.getTime();
+        
+        const sessionStart = firstSession.startedAt.getTime();
+        const sessionEnd = now.getTime();
+
+        // Calculate overlap between (sessionStart, sessionEnd) and (breakStart, breakEnd)
+        if (sessionEnd > breakStart && sessionStart < breakEnd) {
+          const overlapStart = Math.max(sessionStart, breakStart);
+          const overlapEnd = Math.min(sessionEnd, breakEnd);
+          const overlapSeconds = Math.floor((overlapEnd - overlapStart) / 1000);
+          
+          if (overlapSeconds > 0) {
+            calculatedBreakSeconds += overlapSeconds;
           }
         }
       }

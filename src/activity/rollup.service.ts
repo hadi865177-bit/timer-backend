@@ -71,8 +71,8 @@ export class RollupService {
           end: trackerProfile?.custom_schedule_end ? formatTime(trackerProfile.custom_schedule_end) : formatTime(workPolicy.shift_end) || '18:00',
         },
         breakWindow: {
-          start: formatTime(workPolicy.break_start) || '12:00',
-          end: formatTime(workPolicy.break_end) || '13:00',
+          start: trackerProfile?.custom_break_start ? formatTime(trackerProfile.custom_break_start) : formatTime(workPolicy.break_start) || '12:00',
+          end: trackerProfile?.custom_break_end ? formatTime(trackerProfile.custom_break_end) : formatTime(workPolicy.break_end) || '13:00',
         },
         idleThresholdSeconds: workPolicy.idle_threshold_seconds || 300,
       };
@@ -121,6 +121,20 @@ export class RollupService {
         isBreak?: boolean;
       }> = [];
 
+      // ✅ Fetch flexible breaks once for this rollup
+      const flexibleBreaks = await this.prisma.break_sessions.findMany({
+        where: {
+          user_id: userId,
+          break_in_time: { lte: to },
+          // Include active breaks by checking if they started before 'to' 
+          // and either haven't ended or ended after 'from'
+          OR: [
+            { break_out_time: { gte: from } },
+            { break_out_time: null }
+          ]
+        },
+      });
+
       for (const bucket of minuteBuckets) {
         if (!isWithinCheckinWindow(bucket.start, rules)) continue;
         
@@ -141,27 +155,22 @@ export class RollupService {
           return eStart <= bStart && eEnd > bStart;
         });
         
-        // Skip logic:
-        // 1. If minute is already ACTIVE and current samples are also ACTIVE -> Skip (prevent reprocessing)
-        // 2. If minute is already IDLE and current samples are also IDLE -> Skip (prevent reprocessing)
-        // 3. If minute is ACTIVE but samples are IDLE -> Process (allow IDLE to replace ACTIVE after threshold)
-        // 4. If minute is IDLE but samples are ACTIVE -> Process (allow real activity to replace IDLE)
+        // Skip logic (same as before)
         if (alreadyProcessed && existingEntry) {
           const existingIsActive = existingEntry.kind === 'ACTIVE';
           const currentIsActive = active;
-          
-          // Skip only if both are same kind (no state change)
           if (existingIsActive === currentIsActive) {
-            console.log(`⏭️ Skipping already-processed ${existingEntry.kind} minute: ${bucket.start.toISOString()}`);
             continue;
           }
-          
-          // ✅ Allow IDLE to replace ACTIVE - applyIdleThreshold will handle the threshold logic
-          // No need to check consecutive idle minutes here
         }
         
         // ✅ Check if in break time - mark as break
-        if (isWithinBreakWindow(bucket.start, rules)) {
+        const isInScheduledBreak = isWithinBreakWindow(bucket.start, rules);
+        const isInFlexibleBreak = flexibleBreaks.some(fb => 
+          bucket.start >= fb.break_in_time && (fb.break_out_time === null || bucket.start < fb.break_out_time)
+        );
+
+        if (isInScheduledBreak || isInFlexibleBreak) {
           minuteEntries.push({
             userId,
             startedAt: bucket.start,
