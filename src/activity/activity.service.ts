@@ -94,8 +94,18 @@ export class ActivityService {
           
           if (this.rollupQueue) {
             try {
-              await this.rollupQueue.add('rollup-user', { userId: oldSession.userId, from, to });
-              console.log(`🔄 Queued rollup for unclosed session ${oldSession.id}`);
+              // Round to minutes for stable job ID deduplication
+              const roundedFrom = Math.floor(from.getTime() / 60000) * 60000;
+              const roundedTo = Math.floor(to.getTime() / 60000) * 60000;
+              const jobId = `rollup-${oldSession.userId}-${roundedFrom}-${roundedTo}`;
+              
+              await this.rollupQueue.add('rollup-user', { userId: oldSession.userId, from, to }, { 
+                jobId,
+                removeOnComplete: true,
+                attempts: 3,
+                backoff: { type: 'exponential', delay: 1000 }
+              });
+              console.log(`🔄 Queued rollup for unclosed session ${oldSession.id} (Job ID: ${jobId})`);
             } catch (error) {
               console.log(`⚠️ Redis unavailable, running rollup directly for unclosed session`);
               await this.rollupService.rollupUserActivity(oldSession.userId, from, to);
@@ -122,8 +132,17 @@ export class ActivityService {
               
               if (this.rollupQueue) {
                 try {
-                  await this.rollupQueue.add('rollup-user', { userId: oldSession.userId, from, to });
-                  console.log(`🔄 Queued rollup for unclosed session ${oldSession.id}`);
+                  const roundedFrom = Math.floor(from.getTime() / 60000) * 60000;
+                  const roundedTo = Math.floor(to.getTime() / 60000) * 60000;
+                  const jobId = `rollup-${oldSession.userId}-${roundedFrom}-${roundedTo}`;
+
+                  await this.rollupQueue.add('rollup-user', { userId: oldSession.userId, from, to }, { 
+                    jobId,
+                    removeOnComplete: true,
+                    attempts: 3,
+                    backoff: { type: 'exponential', delay: 1000 }
+                  });
+                  console.log(`🔄 Queued rollup for unclosed session ${oldSession.id} (Job ID: ${jobId})`);
                 } catch (error) {
                   console.log(`⚠️ Redis unavailable, running rollup directly for unclosed session`);
                   await this.rollupService.rollupUserActivity(oldSession.userId, from, to);
@@ -174,8 +193,17 @@ export class ActivityService {
 
     if (this.rollupQueue) {
       try {
-        await this.rollupQueue.add('rollup-user', { userId: session.userId, from, to });
-        console.log(`🔄 Queued final rollup for session ${sessionId}`);
+        const roundedFrom = Math.floor(from.getTime() / 60000) * 60000;
+        const roundedTo = Math.floor(to.getTime() / 60000) * 60000;
+        const jobId = `rollup-${session.userId}-${roundedFrom}-${roundedTo}`;
+
+        await this.rollupQueue.add('rollup-user', { userId: session.userId, from, to }, { 
+          jobId,
+          removeOnComplete: true,
+          attempts: 3,
+          backoff: { type: 'exponential', delay: 1000 }
+        });
+        console.log(`🔄 Queued final rollup for session ${sessionId} (Job ID: ${jobId})`);
       } catch (error) {
         console.log(`⚠️ Redis unavailable, running final rollup directly`);
         await this.rollupService.rollupUserActivity(session.userId, from, to);
@@ -228,17 +256,23 @@ export class ActivityService {
         start: trackerProfile?.custom_schedule_start ? formatTime(trackerProfile.custom_schedule_start) : formatTime(policy.shift_start) || '09:00',
         end: trackerProfile?.custom_schedule_end ? formatTime(trackerProfile.custom_schedule_end) : formatTime(policy.shift_end) || '18:00',
       },
-      breakWindow: {
-        start: trackerProfile?.custom_break_start ? formatTime(trackerProfile.custom_break_start) : formatTime(policy.break_start) || '12:00',
-        end: trackerProfile?.custom_break_end ? formatTime(trackerProfile.custom_break_end) : formatTime(policy.break_end) || '13:00',
-      },
+      breakWindow: (trackerProfile as any)?.is_flexible_break 
+        ? { start: null, end: null } 
+        : {
+          start: trackerProfile?.custom_break_start ? formatTime(trackerProfile.custom_break_start) : formatTime(policy.break_start) || '12:00',
+          end: trackerProfile?.custom_break_end ? formatTime(trackerProfile.custom_break_end) : formatTime(policy.break_end) || '13:00',
+        },
       idleThresholdSeconds: policy.idle_threshold_seconds,
     };
 
     console.log(`⏰ [DEBUG] Rules for user ${userId}:`);
     console.log(`   - Timezone: ${rules.timezone}`);
     console.log(`   - Check-in: ${rules.checkinWindow.start} to ${rules.checkinWindow.end} (${trackerProfile?.custom_schedule_start ? 'CUSTOM' : 'ORG'})`);
-    console.log(`   - Break: ${rules.breakWindow.start} to ${rules.breakWindow.end} (${trackerProfile?.custom_break_start ? 'CUSTOM' : 'ORG'})`);
+    if ((trackerProfile as any)?.is_flexible_break) {
+      console.log(`   - Break: IGNORED (Flexible Mode Enabled ✅)`);
+    } else {
+      console.log(`   - Break: ${rules.breakWindow.start} to ${rules.breakWindow.end} (${trackerProfile?.custom_break_start ? 'CUSTOM' : 'ORG'})`);
+    }
     
     const validSamples = [];
     
@@ -319,8 +353,17 @@ export class ActivityService {
 
       if (this.rollupQueue) {
         try {
-          await this.rollupQueue.add('rollup-user', { userId, from, to, projectId });
-          console.log(`🔄 Queued rollup job for user ${userId} with project ${projectId || 'None'}`);
+          const roundedFrom = Math.floor(from.getTime() / 60000) * 60000;
+          const roundedTo = Math.floor(to.getTime() / 60000) * 60000;
+          const jobId = `rollup-${userId}-${roundedFrom}-${roundedTo}`;
+
+          await this.rollupQueue.add('rollup-user', { userId, from, to, projectId }, { 
+            jobId,
+            removeOnComplete: true,
+            attempts: 3,
+            backoff: { type: 'exponential', delay: 1000 }
+          });
+          console.log(`🔄 Queued rollup job for user ${userId} with project ${projectId || 'None'} (Job ID: ${jobId})`);
         } catch (error) {
           console.log(`⚠️ Redis unavailable, running rollup directly`);
           await this.rollupService.rollupUserActivity(userId, from, to, projectId);
@@ -364,7 +407,16 @@ export class ActivityService {
         
         if (this.rollupQueue) {
           try {
-            await this.rollupQueue.add('rollup-user', { userId, from, to: now });
+            const roundedFrom = Math.floor(from.getTime() / 60000) * 60000;
+            const roundedTo = Math.floor(now.getTime() / 60000) * 60000;
+            const jobId = `rollup-${userId}-${roundedFrom}-${roundedTo}`;
+
+            await this.rollupQueue.add('rollup-user', { userId, from, to: now }, { 
+              jobId,
+              removeOnComplete: true,
+              attempts: 3,
+              backoff: { type: 'exponential', delay: 1000 }
+            });
           } catch (error) {
             await this.rollupService.rollupUserActivity(userId, from, now);
           }

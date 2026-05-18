@@ -70,12 +70,20 @@ export class RollupService {
           start: trackerProfile?.custom_schedule_start ? formatTime(trackerProfile.custom_schedule_start) : formatTime(workPolicy.shift_start) || '09:00',
           end: trackerProfile?.custom_schedule_end ? formatTime(trackerProfile.custom_schedule_end) : formatTime(workPolicy.shift_end) || '18:00',
         },
-        breakWindow: {
-          start: trackerProfile?.custom_break_start ? formatTime(trackerProfile.custom_break_start) : formatTime(workPolicy.break_start) || '12:00',
-          end: trackerProfile?.custom_break_end ? formatTime(trackerProfile.custom_break_end) : formatTime(workPolicy.break_end) || '13:00',
-        },
+        breakWindow: (trackerProfile as any)?.is_flexible_break 
+          ? { start: null, end: null } 
+          : {
+            start: trackerProfile?.custom_break_start ? formatTime(trackerProfile.custom_break_start) : formatTime(workPolicy.break_start) || '12:00',
+            end: trackerProfile?.custom_break_end ? formatTime(trackerProfile.custom_break_end) : formatTime(workPolicy.break_end) || '13:00',
+          },
         idleThresholdSeconds: workPolicy.idle_threshold_seconds || 300,
       };
+
+      if ((trackerProfile as any)?.is_flexible_break) {
+        console.log(`✨ [ROLLUP] User ${userId} is in Flexible Mode. Ignoring schedule breaks.`);
+      } else {
+        console.log(`⏰ [ROLLUP] User ${userId} is in Fixed Mode. Window: ${rules.breakWindow.start} - ${rules.breakWindow.end}`);
+      }
 
       const samples = await this.prisma.activitySample.findMany({
         where: { userId, capturedAt: { gte: from, lte: to } },
@@ -88,22 +96,19 @@ export class RollupService {
 
       const minuteBuckets = this.groupByMinute(samples);
       
-      // Get existing time entries to avoid reprocessing
-      // Include entries that overlap with the rollup window (not just those that start in it)
-      const existingEntries = await this.prisma.timeEntry.findMany({
+      const overlappingExisting = await this.prisma.timeEntry.findMany({
         where: {
           userId,
           source: 'AUTO',
           startedAt: { lt: to },
           endedAt: { gt: from },
         },
-        select: { startedAt: true, endedAt: true, kind: true },
       });
       
       // Create a set of already-processed minute timestamps
       const processedMinutes = new Set<number>();
-      console.log(`🔍 Found ${existingEntries.length} existing entries in rollup window`);
-      for (const entry of existingEntries) {
+      console.log(`🔍 Found ${overlappingExisting.length} existing entries in rollup window`);
+      for (const entry of overlappingExisting) {
         let current = new Date(entry.startedAt);
         const end = new Date(entry.endedAt);
         while (current < end) {
@@ -148,7 +153,7 @@ export class RollupService {
         const alreadyProcessed = processedMinutes.has(bucket.start.getTime());
         
         // Find what kind of entry exists for this minute
-        const existingEntry = existingEntries.find(e => {
+        const existingEntry = overlappingExisting.find(e => {
           const eStart = new Date(e.startedAt).getTime();
           const eEnd = new Date(e.endedAt).getTime();
           const bStart = bucket.start.getTime();
@@ -225,139 +230,103 @@ export class RollupService {
       const entries = this.applyIdleThreshold(minuteEntries, rules.idleThresholdSeconds, initialIdleCount);
       const merged = this.mergeContiguous(entries);
 
-      await this.prisma.$transaction(async (tx) => {
-        if (merged.length === 0) return;
+      const toDeleteIds = new Set<bigint>();
+      const toCreate: any[] = [];
+      const finalEntriesToCreate: any[] = [];
 
-        for (const newEntry of merged) {
-          const entryWithProject = { ...newEntry, projectId: projectId || null };
-          
-          // Delete any overlapping entries of same kind before inserting
-          const overlappingEntries = await tx.timeEntry.findMany({
-            where: {
-              userId,
-              source: 'AUTO',
-              kind: newEntry.kind,
-              startedAt: { lt: newEntry.endedAt },
-              endedAt: { gt: newEntry.startedAt },
-            },
-          });
+      for (const newEntry of merged) {
+        const entryWithProject = { ...newEntry, projectId: projectId || null };
 
-          if (overlappingEntries.length > 0) {
-            // Delete all overlapping entries
-            await tx.timeEntry.deleteMany({
-              where: {
-                id: { in: overlappingEntries.map(e => e.id) },
-              },
-            });
-            console.log(`🗑️ Deleted ${overlappingEntries.length} overlapping ${newEntry.kind} entries`);
-          }
+        // 1. Same-kind overlaps: Mark for deletion
+        const sameKindOverlaps = overlappingExisting.filter(e =>
+          e.kind === newEntry.kind &&
+          e.startedAt < newEntry.endedAt &&
+          e.endedAt > newEntry.startedAt
+        );
 
-          // Find conflicting entries of opposite kind that truly overlap
-          // Use strict time comparison to avoid millisecond boundary issues
-          const conflicting = await tx.timeEntry.findMany({
-            where: {
-              userId,
-              source: 'AUTO',
-              kind: { not: newEntry.kind },
-              startedAt: { lt: newEntry.endedAt },
-              endedAt: { gt: newEntry.startedAt },
-            },
-          });
-          
-          // Filter out exact boundary matches (adjacent entries)
-          const trueConflicts = conflicting.filter(c => {
-            const cStart = c.startedAt.getTime();
-            const cEnd = c.endedAt.getTime();
-            const nStart = newEntry.startedAt.getTime();
-            const nEnd = newEntry.endedAt.getTime();
-            
-            // Exclude if conflict ends exactly where new starts (adjacent)
-            if (cEnd === nStart) return false;
-            
-            // Exclude if conflict starts exactly where new ends (adjacent)
-            if (cStart === nEnd) return false;
-            
-            return true;
-          });
-
-          // If new entry conflicts with existing entries of opposite kind:
-          // - ACTIVE should overwrite IDLE (real activity takes priority)
-          // - IDLE should NOT overwrite ACTIVE (preserve real activity)
-          // But allow IDLE to be added in new time periods (no full overlap)
-          if (newEntry.kind === 'IDLE' && trueConflicts.length > 0) {
-            // Check if there's a conflicting ACTIVE that fully covers this IDLE period
-            const fullyOverlapped = trueConflicts.some(c => 
-              c.kind === 'ACTIVE' && 
-              c.startedAt <= newEntry.startedAt && 
-              c.endedAt >= newEntry.endedAt
-            );
-            
-            if (fullyOverlapped) {
-              console.log(`⏭️ IDLE fully covered by ACTIVE, skipping: ${newEntry.startedAt.toISOString()}`);
-              continue;
-            }
-          }
-
-          // Log conflicts before processing
-          if (trueConflicts.length > 0) {
-            console.log(`🔍 Conflict detected for ${newEntry.kind} ${newEntry.startedAt.toISOString()}-${newEntry.endedAt.toISOString()}:`);
-            for (const c of trueConflicts) {
-              console.log(`   - Existing ${c.kind} ${c.startedAt.toISOString()}-${c.endedAt.toISOString()}`);
-            }
-          }
-
-          // Collect all operations to execute in batch
-          const toDelete: bigint[] = [];
-          const toCreate: any[] = [];
-
-          for (const conflict of trueConflicts) {
-            toDelete.push(conflict.id);
-            console.log(`   🗑️ Deleting: ${conflict.kind} ${conflict.startedAt.toISOString()}-${conflict.endedAt.toISOString()}`);
-
-            if (conflict.startedAt < newEntry.startedAt) {
-              const splitEntry = {
-                userId,
-                startedAt: conflict.startedAt,
-                endedAt: newEntry.startedAt,
-                kind: conflict.kind,
-                source: 'AUTO',
-              };
-              toCreate.push(splitEntry);
-              console.log(`   ➕ Creating split (before): ${conflict.kind} ${conflict.startedAt.toISOString()}-${newEntry.startedAt.toISOString()}`);
-            }
-
-            if (conflict.endedAt > newEntry.endedAt) {
-              const splitEntry = {
-                userId,
-                startedAt: newEntry.endedAt,
-                endedAt: conflict.endedAt,
-                kind: conflict.kind,
-                source: 'AUTO',
-              };
-              toCreate.push(splitEntry);
-              console.log(`   ➕ Creating split (after): ${conflict.kind} ${newEntry.endedAt.toISOString()}-${conflict.endedAt.toISOString()}`);
-            }
-          }
-
-          // Execute deletes and creates in batch (atomic)
-          if (toDelete.length > 0) {
-            await tx.timeEntry.deleteMany({
-              where: { id: { in: toDelete } },
-            });
-          }
-
-          if (toCreate.length > 0) {
-            await tx.timeEntry.createMany({
-              data: toCreate,
-            });
-          }
-
-          // Insert new entry
-          await tx.timeEntry.create({ data: entryWithProject });
-          const duration = Math.floor((newEntry.endedAt.getTime() - newEntry.startedAt.getTime()) / 60000);
-          console.log(`✅ Inserted ${newEntry.kind}: ${newEntry.startedAt.toISOString()}-${newEntry.endedAt.toISOString()} (${duration}min)`);
+        for (const e of sameKindOverlaps) {
+          toDeleteIds.add(e.id);
         }
-      }, { timeout: 15000 });
+
+        // 2. Opposite-kind conflicts
+        const conflicting = overlappingExisting.filter(e =>
+          e.kind !== newEntry.kind &&
+          e.startedAt < newEntry.endedAt &&
+          e.endedAt > newEntry.startedAt
+        );
+
+        // Filter out boundary matches
+        const trueConflicts = conflicting.filter(c => {
+          const cStart = c.startedAt.getTime();
+          const cEnd = c.endedAt.getTime();
+          const nStart = newEntry.startedAt.getTime();
+          const nEnd = newEntry.endedAt.getTime();
+          return cStart !== nEnd && cEnd !== nStart;
+        });
+
+        // Skip logic for IDLE
+        if (newEntry.kind === 'IDLE' && trueConflicts.length > 0) {
+          const fullyOverlapped = trueConflicts.some(c =>
+            c.kind === 'ACTIVE' &&
+            c.startedAt <= newEntry.startedAt &&
+            c.endedAt >= newEntry.endedAt
+          );
+
+          if (fullyOverlapped) {
+            console.log(`⏭️ IDLE fully covered by ACTIVE, skipping: ${newEntry.startedAt.toISOString()}`);
+            continue;
+          }
+        }
+
+        // Process conflicts (delete and split)
+        for (const conflict of trueConflicts) {
+          toDeleteIds.add(conflict.id);
+
+          if (conflict.startedAt < newEntry.startedAt) {
+            toCreate.push({
+              userId,
+              startedAt: conflict.startedAt,
+              endedAt: newEntry.startedAt,
+              kind: conflict.kind,
+              source: 'AUTO',
+              projectId: conflict.projectId,
+            });
+          }
+
+          if (conflict.endedAt > newEntry.endedAt) {
+            toCreate.push({
+              userId,
+              startedAt: newEntry.endedAt,
+              endedAt: conflict.endedAt,
+              kind: conflict.kind,
+              source: 'AUTO',
+              projectId: conflict.projectId,
+            });
+          }
+        }
+
+        finalEntriesToCreate.push(entryWithProject);
+      }
+
+      // Execute all operations in a single atomic transaction
+      await this.prisma.$transaction(async (tx) => {
+        if (toDeleteIds.size > 0) {
+          await tx.timeEntry.deleteMany({
+            where: { id: { in: Array.from(toDeleteIds) } },
+          });
+          console.log(`🗑️ Batched deleted ${toDeleteIds.size} entries`);
+        }
+
+        if (toCreate.length > 0) {
+          await tx.timeEntry.createMany({ data: toCreate });
+          console.log(`➕ Created ${toCreate.length} split segments`);
+        }
+
+        if (finalEntriesToCreate.length > 0) {
+          await tx.timeEntry.createMany({ data: finalEntriesToCreate });
+          console.log(`✅ Batched inserted ${finalEntriesToCreate.length} merged entries`);
+        }
+      }, { timeout: 30000 });
 
       return { processed: merged.length };
 

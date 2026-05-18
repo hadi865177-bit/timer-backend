@@ -27,6 +27,8 @@ export function isWithinBreakWindow(date: Date, rules: any): boolean {
   const { breakWindow } = rules;
   const { start, end } = breakWindow;
 
+  if (!start || !end) return false;
+
   if (end < start) {
     return timeStr >= start || timeStr < end;
   }
