@@ -4,7 +4,7 @@ import { randomUUID } from 'crypto';
 
 @Injectable()
 export class BreakService {
-  private readonly MAX_BREAK_DURATION_SECONDS = 300; // 5 minutes (TESTING - change back to 3600 for production)
+  private readonly MAX_BREAK_DURATION_SECONDS = 3600; // 1 hour (Production)
 
   constructor(private prisma: PrismaService) {}
 
