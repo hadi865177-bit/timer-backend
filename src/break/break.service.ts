@@ -24,6 +24,30 @@ export class BreakService {
       throw new BadRequestException('You already have an active break session');
     }
 
+    // Find the first check-in session of today to calculate the 2-hour restriction from the start of the day
+    const firstSessionToday = await this.prisma.deviceSession.findFirst({
+      where: {
+        userId,
+        startedAt: { gte: today },
+      },
+      orderBy: {
+        startedAt: 'asc',
+      },
+    });
+
+    if (!firstSessionToday) {
+      throw new BadRequestException('You must check in first before starting a break.');
+    }
+
+    const twoHoursInMs = 2 * 60 * 60 * 1000; // 2 hours
+    const timeElapsed = now.getTime() - firstSessionToday.startedAt.getTime();
+
+    if (timeElapsed < twoHoursInMs) {
+      const remainingMs = twoHoursInMs - timeElapsed;
+      const remainingMinutes = Math.ceil(remainingMs / 60000);
+      throw new BadRequestException(`You can only take a break after 2 hours of check-in. Please wait ${remainingMinutes} more minute(s).`);
+    }
+
     // Check if user already took a break today
     const todayBreak = await this.prisma.break_sessions.findFirst({
       where: {
@@ -110,6 +134,7 @@ export class BreakService {
   }
 
   async getFlexibleBreakStatus(userId: string) {
+    const now = new Date();
     const activeBreak = await this.prisma.break_sessions.findFirst({
       where: {
         user_id: userId,
@@ -117,15 +142,44 @@ export class BreakService {
       },
     });
 
+    const today = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+
+    // Find the first check-in session of today to check break eligibility
+    const firstSessionToday = await this.prisma.deviceSession.findFirst({
+      where: {
+        userId,
+        startedAt: { gte: today },
+      },
+      orderBy: {
+        startedAt: 'asc',
+      },
+    });
+
+    let canTakeBreak = true;
+    let breakAvailableInSeconds = 0;
+
+    if (firstSessionToday) {
+      const twoHoursInMs = 2 * 60 * 60 * 1000;
+      const timeElapsed = now.getTime() - firstSessionToday.startedAt.getTime();
+      if (timeElapsed < twoHoursInMs) {
+        canTakeBreak = false;
+        breakAvailableInSeconds = Math.max(0, Math.ceil((twoHoursInMs - timeElapsed) / 1000));
+      }
+    } else {
+      canTakeBreak = false;
+      breakAvailableInSeconds = -1; // Not checked in today
+    }
+
     if (!activeBreak) {
       return {
         inBreak: false,
         elapsedSeconds: 0,
         remainingSeconds: 0,
+        canTakeBreak,
+        breakAvailableInSeconds,
       };
     }
 
-    const now = new Date();
     const elapsedSeconds = Math.floor((now.getTime() - activeBreak.break_in_time.getTime()) / 1000);
     
     // Check if break has exceeded max duration (Auto Break-out)
@@ -136,7 +190,9 @@ export class BreakService {
         inBreak: false,
         elapsedSeconds: 0,
         remainingSeconds: 0,
-        wasAutoStopped: true
+        wasAutoStopped: true,
+        canTakeBreak: false,
+        breakAvailableInSeconds: -1,
       };
     }
 
@@ -148,6 +204,8 @@ export class BreakService {
       remainingSeconds,
       breakInTime: activeBreak.break_in_time,
       maxDurationSeconds: this.MAX_BREAK_DURATION_SECONDS,
+      canTakeBreak: false,
+      breakAvailableInSeconds: 0,
     };
   }
 
