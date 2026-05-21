@@ -564,31 +564,8 @@ export class ActivityService {
 
     const totalSeconds = activeSeconds + idleSeconds + breakSeconds;
 
-    // Calculate activity rate from activitySample
-    const samples = await this.prisma.activitySample.findMany({
-      where: {
-        userId,
-        capturedAt: { gte: today },
-      },
-      select: {
-        activeSeconds: true,
-      },
-    });
-
-    let totalActiveSeconds = 0;
-    let totalSampleSeconds = 0;
-    let samplesWithData = 0;
-
-    for (const sample of samples) {
-      if (sample.activeSeconds != null) {
-        totalActiveSeconds += sample.activeSeconds;
-        totalSampleSeconds += 5; // Each sample is 5 seconds
-        samplesWithData++;
-      }
-    }
-
-    // ✅ PRODUCTION-LEVEL LOGIC: Start from 100% and drop based on inactivity
     let activityRate = 0;
+    let calculatedBreakSeconds = 0;
     
     if (firstSession && policy) {
       // Calculate total elapsed time
@@ -596,8 +573,6 @@ export class ActivityService {
       const elapsedSeconds = Math.floor(elapsedMs / 1000);
       
       // ✅ Calculate break time from schedule (not from TimeEntry)
-      let calculatedBreakSeconds = 0;
-      
       if (policy.break_start && policy.break_end) {
         const formatTime = (time: Date | null) => {
           if (!time) return null;
@@ -646,7 +621,6 @@ export class ActivityService {
         where: {
           user_id: userId,
           break_in_time: { gte: today },
-          // Remove the "not: null" constraint to include currently active breaks
         },
       });
 
@@ -670,34 +644,38 @@ export class ActivityService {
         }
       }
       
-      const workSeconds = elapsedSeconds - calculatedBreakSeconds; // Exclude break time
-      
-      // ✅ Grace period - first 30 seconds always 100%
-      const GRACE_PERIOD_SECONDS = 30;
-      
-      if (workSeconds < GRACE_PERIOD_SECONDS) {
-        activityRate = 100;
-      } else if (workSeconds > 0) {
-        // ✅ Exclude grace period from calculation
-        const workSecondsAfterGrace = workSeconds - GRACE_PERIOD_SECONDS;
-        
-        // Expected total seconds (assuming samples every 5 seconds)
-        const expectedTotalSeconds = Math.floor(workSecondsAfterGrace / 5) * 5;
-        
-        if (expectedTotalSeconds > 0) {
-          // ✅ Prevent negative inactive seconds
-          const inactiveSeconds = Math.max(0, expectedTotalSeconds - totalActiveSeconds);
-          
-          // Activity rate = 100% - (inactive / expected) * 100
-          activityRate = Math.round(100 - (inactiveSeconds / expectedTotalSeconds) * 100);
-          
-          // Bounds check
-          if (activityRate < 0) activityRate = 0;
-          if (activityRate > 100) activityRate = 100;
-        }
-      }
-      
       breakSeconds = calculatedBreakSeconds; // Update for logging
+    }
+
+    // ✅ PROFESSIONAL FIX: Calculate activity rate directly from the uploaded samples.
+    // This allows the rate to drop immediately if the user stops moving the mouse/keys (even before the 5-min idle threshold).
+    // Using totalSampleSeconds as the denominator prevents clock-drift race conditions.
+    const samples = await this.prisma.activitySample.findMany({
+      where: {
+        userId,
+        capturedAt: { gte: today },
+      },
+      select: {
+        activeSeconds: true,
+      },
+    });
+
+    let totalActiveSeconds = 0;
+    let totalSampleSeconds = 0;
+
+    for (const sample of samples) {
+      if (sample.activeSeconds != null) {
+        totalActiveSeconds += sample.activeSeconds;
+        totalSampleSeconds += 5; // Each sample represents 5 seconds
+      }
+    }
+
+    if (totalSampleSeconds > 0) {
+      activityRate = Math.round((totalActiveSeconds / totalSampleSeconds) * 100);
+      if (activityRate < 0) activityRate = 0;
+      if (activityRate > 100) activityRate = 100;
+    } else {
+      activityRate = 100; // Default right after check-in when no samples are uploaded yet
     }
 
     // Removed verbose debug logs for cleaner output
