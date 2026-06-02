@@ -309,24 +309,32 @@ export class RollupService {
       }
 
       // Execute all operations in a single atomic transaction
-      await this.prisma.$transaction(async (tx) => {
-        if (toDeleteIds.size > 0) {
-          await tx.timeEntry.deleteMany({
+      const operations = [];
+
+      if (toDeleteIds.size > 0) {
+        operations.push(
+          this.prisma.timeEntry.deleteMany({
             where: { id: { in: Array.from(toDeleteIds) } },
-          });
-          console.log(`🗑️ Batched deleted ${toDeleteIds.size} entries`);
-        }
+          })
+        );
+      }
 
-        if (toCreate.length > 0) {
-          await tx.timeEntry.createMany({ data: toCreate });
-          console.log(`➕ Created ${toCreate.length} split segments`);
-        }
+      if (toCreate.length > 0) {
+        operations.push(
+          this.prisma.timeEntry.createMany({ data: toCreate })
+        );
+      }
 
-        if (finalEntriesToCreate.length > 0) {
-          await tx.timeEntry.createMany({ data: finalEntriesToCreate });
-          console.log(`✅ Batched inserted ${finalEntriesToCreate.length} merged entries`);
-        }
-      }, { timeout: 30000 });
+      if (finalEntriesToCreate.length > 0) {
+        operations.push(
+          this.prisma.timeEntry.createMany({ data: finalEntriesToCreate })
+        );
+      }
+
+      if (operations.length > 0) {
+        await this.prisma.$transaction(operations);
+        console.log(`⚡ Rollup transaction executed successfully with ${operations.length} operations`);
+      }
 
       return { processed: merged.length };
 

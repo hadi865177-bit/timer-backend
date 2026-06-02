@@ -5,6 +5,7 @@ module.exports = {
     instances: 1, // Single instance for now, increase if needed
     exec_mode: 'fork',
     max_memory_restart: '1G', // Auto-restart if memory exceeds 1GB
+    node_args: '--max-old-space-size=800', // Limit V8 heap to trigger GC early and prevent PM2 restarts
     env: {
       NODE_ENV: 'production',
       PORT: 3001

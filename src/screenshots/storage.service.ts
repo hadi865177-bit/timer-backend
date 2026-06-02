@@ -3,6 +3,9 @@ import { S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
 const sharp = require('sharp');
+// Disable caching and set concurrency to 1 to reduce off-heap native memory usage
+sharp.cache(false);
+sharp.concurrency(1);
 
 @Injectable()
 export class StorageService {
