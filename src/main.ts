@@ -70,8 +70,18 @@ async function bootstrap() {
     };
     
     // Log only if memory usage is high
-    if (used.heapUsed > 500 * 1024 * 1024) { // > 500MB
+    if (used.heapUsed > 400 * 1024 * 1024) { // > 400MB
       console.log('📊 Memory Usage:', memoryStats);
+      if (global && typeof global.gc === 'function') {
+        console.log('🧹 V8 heap exceeds 400MB. Triggering manual garbage collection...');
+        try {
+          global.gc();
+          const afterGC = process.memoryUsage();
+          console.log(`📊 Memory after GC: rss=${Math.round(afterGC.rss / 1024 / 1024)}MB, heapUsed=${Math.round(afterGC.heapUsed / 1024 / 1024)}MB`);
+        } catch (e) {
+          console.error('❌ Manual GC failed:', e);
+        }
+      }
     }
     
     // Critical memory alert
