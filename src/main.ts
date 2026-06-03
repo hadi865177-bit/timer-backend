@@ -69,11 +69,11 @@ async function bootstrap() {
       heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
     };
     
-    // Log only if memory usage is high
-    if (used.heapUsed > 400 * 1024 * 1024) { // > 400MB
-      console.log('📊 Memory Usage:', memoryStats);
+    // Log only if memory usage is high or RSS gets close to 1GB limit
+    if (used.heapUsed > 400 * 1024 * 1024 || used.rss > 800 * 1024 * 1024) { 
+      console.log('📊 High Memory Usage Detected:', memoryStats);
       if (global && typeof global.gc === 'function') {
-        console.log('🧹 V8 heap exceeds 400MB. Triggering manual garbage collection...');
+        console.log('🧹 Triggering manual garbage collection to prevent PM2 restart...');
         try {
           global.gc();
           const afterGC = process.memoryUsage();
