@@ -102,6 +102,7 @@ export class ActivityService {
               await this.rollupQueue.add('rollup-user', { userId: oldSession.userId, from, to }, { 
                 jobId,
                 removeOnComplete: true,
+                removeOnFail: true,
                 attempts: 3,
                 backoff: { type: 'exponential', delay: 1000 }
               });
@@ -139,6 +140,7 @@ export class ActivityService {
                   await this.rollupQueue.add('rollup-user', { userId: oldSession.userId, from, to }, { 
                     jobId,
                     removeOnComplete: true,
+                    removeOnFail: true,
                     attempts: 3,
                     backoff: { type: 'exponential', delay: 1000 }
                   });
@@ -200,6 +202,7 @@ export class ActivityService {
         await this.rollupQueue.add('rollup-user', { userId: session.userId, from, to }, { 
           jobId,
           removeOnComplete: true,
+          removeOnFail: true,
           attempts: 3,
           backoff: { type: 'exponential', delay: 1000 }
         });
@@ -360,6 +363,7 @@ export class ActivityService {
           await this.rollupQueue.add('rollup-user', { userId, from, to, projectId }, { 
             jobId,
             removeOnComplete: true,
+            removeOnFail: true,
             attempts: 3,
             backoff: { type: 'exponential', delay: 1000 }
           });
@@ -414,6 +418,7 @@ export class ActivityService {
             await this.rollupQueue.add('rollup-user', { userId, from, to: now }, { 
               jobId,
               removeOnComplete: true,
+              removeOnFail: true,
               attempts: 3,
               backoff: { type: 'exponential', delay: 1000 }
             });

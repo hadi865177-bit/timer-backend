@@ -63,30 +63,31 @@ async function bootstrap() {
   // Memory monitoring (every 60 seconds)
   setInterval(() => {
     const used = process.memoryUsage();
-    const memoryStats = {
-      rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
-      heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
-      heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
-    };
+    const rssMB = Math.round(used.rss / 1024 / 1024);
+    const heapUsedMB = Math.round(used.heapUsed / 1024 / 1024);
+    const heapTotalMB = Math.round(used.heapTotal / 1024 / 1024);
+    const externalMB = Math.round(used.external / 1024 / 1024); // Native Buffers + Sharp + Prisma
+    const arrayBuffersMB = Math.round((used.arrayBuffers || 0) / 1024 / 1024);
     
-    // Log only if memory usage is high or RSS gets close to 1GB limit
-    if (used.heapUsed > 400 * 1024 * 1024 || used.rss > 800 * 1024 * 1024) { 
-      console.log('📊 High Memory Usage Detected:', memoryStats);
+    // Log only if memory usage is high
+    if (used.rss > 800 * 1024 * 1024 || externalMB > 200) {
+      console.log(`📊 Memory: rss=${rssMB}MB | heap=${heapUsedMB}/${heapTotalMB}MB | external=${externalMB}MB | arrayBuffers=${arrayBuffersMB}MB`);
+      
       if (global && typeof global.gc === 'function') {
-        console.log('🧹 Triggering manual garbage collection to prevent PM2 restart...');
+        console.log('🧹 Triggering GC (high external/native memory)...');
         try {
           global.gc();
-          const afterGC = process.memoryUsage();
-          console.log(`📊 Memory after GC: rss=${Math.round(afterGC.rss / 1024 / 1024)}MB, heapUsed=${Math.round(afterGC.heapUsed / 1024 / 1024)}MB`);
+          const after = process.memoryUsage();
+          console.log(`📊 After GC: rss=${Math.round(after.rss / 1024 / 1024)}MB | external=${Math.round(after.external / 1024 / 1024)}MB | heap=${Math.round(after.heapUsed / 1024 / 1024)}MB`);
         } catch (e) {
           console.error('❌ Manual GC failed:', e);
         }
       }
     }
     
-    // Critical memory alert
-    if (used.heapUsed > 900 * 1024 * 1024) { // > 900MB
-      console.error('⚠️ CRITICAL MEMORY USAGE - Consider restarting');
+    // Critical alert
+    if (rssMB > 950) {
+      console.error(`⚠️ CRITICAL RSS: ${rssMB}MB — restart imminent!`);
     }
   }, 60000);
   

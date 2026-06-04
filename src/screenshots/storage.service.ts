@@ -36,13 +36,15 @@ export class StorageService {
     base64Data: string,
     timestamp: Date,
   ): Promise<{ filePath: string; fileSize: number }> {
+    let buffer: Buffer | null = null;
+    let compressedBuffer: Buffer | null = null;
     try {
       const matches = base64Data.match(/^data:image\/jpeg;base64,(.+)$/);
       if (!matches) {
         throw new Error('Invalid base64 image data');
       }
 
-      const buffer = Buffer.from(matches[1], 'base64');
+      buffer = Buffer.from(matches[1], 'base64');
       
       // Validate image size (10MB max)
       const maxSize = 10 * 1024 * 1024; // 10MB
@@ -50,55 +52,60 @@ export class StorageService {
         throw new Error(`Image too large: ${Math.round(buffer.length / 1024 / 1024)}MB (max 10MB)`);
       }
       
-      const compressedBuffer = await sharp(buffer)
+      const originalSize = buffer.length;
+      compressedBuffer = await sharp(buffer)
         .jpeg({ quality: 70, progressive: true })
         .resize(1920, 1080, { fit: 'inside', withoutEnlargement: true })
-        .timeout({ seconds: 10 }) // Add timeout to prevent hanging
+        .timeout({ seconds: 10 })
         .toBuffer();
-    
-    console.log(`🗜️ Compressed: ${buffer.length} → ${compressedBuffer.length} bytes (${Math.round((1 - compressedBuffer.length / buffer.length) * 100)}% reduction)`);
+      
+      // 🔑 Free original buffer immediately — it's large (up to 10MB) and lives in external/native memory
+      buffer = null;
 
-    const date = timestamp.toISOString().split('T')[0];
-    const filename = `screenshot-${timestamp.getTime()}.jpg`;
+      console.log(`🗜️ Compressed: ${originalSize} → ${compressedBuffer.length} bytes (${Math.round((1 - compressedBuffer.length / originalSize) * 100)}% reduction)`);
 
-    if (this.useS3) {
-      const key = `screenshots/${userId}/${date}/${filename}`;
-      
-      const upload = new Upload({
-        client: this.s3Client,
-        params: {
-          Bucket: this.bucketName,
-          Key: key,
-          Body: compressedBuffer,
-          ContentType: 'image/jpeg',
-        },
-      });
+      const date = timestamp.toISOString().split('T')[0];
+      const filename = `screenshot-${timestamp.getTime()}.jpg`;
 
-      await upload.done();
-      
-      const s3Url = `https://${this.bucketName}.s3.amazonaws.com/${key}`;
-      
-      return {
-        filePath: s3Url,
-        fileSize: compressedBuffer.length,
-      };
-    } else {
-      const path = require('path');
-      const fs = require('fs').promises;
-      const baseDir = process.cwd() || __dirname;
-      const uploadDir = path.join(baseDir, 'public', 'screenshots');
-      const userDir = path.join(uploadDir, userId, date);
-      await fs.mkdir(userDir, { recursive: true });
-      const filePath = path.join(userDir, filename);
-      await fs.writeFile(filePath, compressedBuffer);
-      const relativePath = path.join('screenshots', userId, date, filename).replace(/\\/g, '/');
-      
-      return {
-        filePath: relativePath,
-        fileSize: compressedBuffer.length,
-      };
-    }
-  } catch (error: any) {
+      if (this.useS3) {
+        const key = `screenshots/${userId}/${date}/${filename}`;
+        
+        const upload = new Upload({
+          client: this.s3Client,
+          params: {
+            Bucket: this.bucketName,
+            Key: key,
+            Body: compressedBuffer,
+            ContentType: 'image/jpeg',
+          },
+        });
+
+        await upload.done();
+        const fileSize = compressedBuffer.length;
+        
+        // 🔑 Free compressed buffer after upload
+        compressedBuffer = null;
+        
+        const s3Url = `https://${this.bucketName}.s3.amazonaws.com/${key}`;
+        return { filePath: s3Url, fileSize };
+      } else {
+        const path = require('path');
+        const fs = require('fs').promises;
+        const baseDir = process.cwd() || __dirname;
+        const uploadDir = path.join(baseDir, 'public', 'screenshots');
+        const userDir = path.join(uploadDir, userId, date);
+        await fs.mkdir(userDir, { recursive: true });
+        const filePath = path.join(userDir, filename);
+        await fs.writeFile(filePath, compressedBuffer);
+        const fileSize = compressedBuffer.length;
+        
+        // 🔑 Free compressed buffer after write
+        compressedBuffer = null;
+        
+        const relativePath = path.join('screenshots', userId, date, filename).replace(/\\/g, '/');
+        return { filePath: relativePath, fileSize };
+      }
+    } catch (error: any) {
     console.error('Screenshot processing failed:', error);
     throw new Error(`Failed to process screenshot: ${error?.message || 'Unknown error'}`);
   }
