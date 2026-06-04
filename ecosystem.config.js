@@ -4,7 +4,7 @@ module.exports = {
     script: 'dist/main.js',
     instances: 1, // Single instance for now, increase if needed
     exec_mode: 'fork',
-    max_memory_restart: '1.2G', // Auto-restart if memory exceeds 1.2GB
+    max_memory_restart: '1200M', // Auto-restart if memory exceeds 1.2GB
     node_args: '--max-old-space-size=600 --expose-gc', // Limit V8 heap to trigger GC early, expose GC for manual cleanup
     env: {
       NODE_ENV: 'production',
